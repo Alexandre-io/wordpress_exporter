@@ -16,11 +16,17 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+const (
+	namespace = "wordpress"
+)
+
 //This is my collector metrics
 type wpCollector struct {
 	numPostsMetric    *prometheus.Desc
 	numCommentsMetric *prometheus.Desc
 	numUsersMetric    *prometheus.Desc
+	numSessionsMetric *prometheus.Desc
+	numWebhooksMetric *prometheus.GaugeVec
 
 	dbHost        string
 	dbName        string
@@ -32,17 +38,30 @@ type wpCollector struct {
 //This is a constructor for my wpCollector struct
 func newWordPressCollector(host string, dbname string, username string, pass string, tablePrefix string) *wpCollector {
 	return &wpCollector{
-		numPostsMetric: prometheus.NewDesc("wp_num_posts_metric",
+		numPostsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_posts_metric"),
 			"Shows the number of total posts in the WordPress site",
 			nil, nil,
 		),
-		numCommentsMetric: prometheus.NewDesc("wp_num_comments_metric",
+		numCommentsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_comments_metric"),
 			"Shows the number of total comments in the WordPress site",
 			nil, nil,
 		),
-		numUsersMetric: prometheus.NewDesc("wp_num_users_metric",
+		numUsersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_users_metric"),
 			"Shows the number of registered users in the WordPress site",
 			nil, nil,
+		),
+
+		numSessionsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_sessions_metric"),
+			"Shows the number of sessions in the WordPress site",
+			nil, nil,
+		),
+
+		numWebhooksMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "webhooks",
+			Help:      "Shows the number of webhooks in the WordPress site",
+		},
+			[]string{"status"},
 		),
 
 		dbHost:        host,
@@ -60,6 +79,8 @@ func (collector *wpCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.numPostsMetric
 	ch <- collector.numCommentsMetric
 	ch <- collector.numUsersMetric
+	ch <- collector.numSessionsMetric
+	collector.numWebhooksMetric.Describe(ch)
 }
 
 //Collect method is required for a prometheus.Collector type
@@ -75,35 +96,59 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	defer db.Close()
 
-	//select count(*) as num_users from wp_users;
+	//select count(*) as numUsers from wp_users;
 	var numUsers float64
-	q1 := fmt.Sprintf("select count(*) as num_users from %susers;", collector.dbTablePrefix)
+	q1 := fmt.Sprintf("select count(*) as numUsers from %susers;", collector.dbTablePrefix)
 	err = db.QueryRow(q1).Scan(&numUsers)
 	if err != nil {
 		log.Fatal(err)
 	}
+	ch <- prometheus.MustNewConstMetric(collector.numUsersMetric, prometheus.CounterValue, numUsers)
 
-	//select count(*) as num_comments from wp_comments;
+	//select count(*) as numComments from wp_comments;
 	var numComments float64
-	q2 := fmt.Sprintf("select count(*) as num_comments from %scomments;", collector.dbTablePrefix)
+	q2 := fmt.Sprintf("select count(*) as numComments from %scomments;", collector.dbTablePrefix)
 	err = db.QueryRow(q2).Scan(&numComments)
 	if err != nil {
 		log.Fatal(err)
 	}
+	ch <- prometheus.MustNewConstMetric(collector.numCommentsMetric, prometheus.CounterValue, numComments)
 
-	//select count(*) as num_posts from wp_posts WHERE post_type='post' AND post_status!='auto-draft';
+	//select count(*) as numPosts from wp_posts WHERE post_type='post' AND post_status!='auto-draft';
 	var numPosts float64
-	q3 := fmt.Sprintf("select count(*) as num_posts from %sposts WHERE post_type='post' AND post_status!='auto-draft';", collector.dbTablePrefix)
+	q3 := fmt.Sprintf("select count(*) as numPosts from %sposts WHERE post_type='post' AND post_status!='auto-draft';", collector.dbTablePrefix)
 	err = db.QueryRow(q3).Scan(&numPosts)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	//Write latest value for each metric in the prometheus metric channel.
-	//Note that you can pass CounterValue, GaugeValue, or UntypedValue types here.
 	ch <- prometheus.MustNewConstMetric(collector.numPostsMetric, prometheus.CounterValue, numPosts)
-	ch <- prometheus.MustNewConstMetric(collector.numCommentsMetric, prometheus.CounterValue, numComments)
-	ch <- prometheus.MustNewConstMetric(collector.numUsersMetric, prometheus.CounterValue, numUsers)
+
+	//select count(*) as numSessions from wp_woocommerce_sessions;
+	var numSessions float64
+	q4 := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
+	err = db.QueryRow(q4).Scan(&numSessions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ch <- prometheus.MustNewConstMetric(collector.numSessionsMetric, prometheus.CounterValue, numSessions)
+
+	//select post_status as statusWhs, count(*) as numWhs from wp_posts WHERE post_type='scheduled-action' GROUP BY post_status;
+	q5 := fmt.Sprintf("select post_status as statusWhs, count(*) as numWhs from %sposts WHERE post_type='scheduled-action' GROUP BY post_status;", collector.dbTablePrefix)
+	rows, err := db.Query(q5)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var statusWhs string
+		var numWhs float64
+		err = rows.Scan(&statusWhs, &numWhs)
+		if err != nil {
+			log.Fatal(err)
+		}
+		collector.numWebhooksMetric.WithLabelValues(statusWhs).Set(numWhs)
+	}
+	collector.numWebhooksMetric.Collect(ch)
 
 }
 

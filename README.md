@@ -1,5 +1,5 @@
 # wordpress_exporter
-Prometheus exporter for Wordpress 
+Prometheus exporter for WordPress / WooCommerce
 
 Inspired by [kotsis/wordpress_exporter](https://github.com/kotsis/wordpress_exporter) and [devent/wordpress_exporter](https://github.com/devent/wordpress_exporter)
 
@@ -19,4 +19,4 @@ For Prometheus to start scraping the metrics you have to edit /etc/prometheus/pr
 ```
 
 # Grafana
-You can find an example of Wordpress dashboard in examples/grafana/dashboard.json
+You can find an example of WordPress dashboard in examples/grafana/dashboard.json
