@@ -139,6 +139,7 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 		log.Fatal(err)
 	}
 	defer rows.Close()
+	collector.numWebhooksMetric.Reset()
 	for rows.Next() {
 		var statusWhs string
 		var numWhs float64
