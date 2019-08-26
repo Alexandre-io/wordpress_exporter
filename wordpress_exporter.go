@@ -64,10 +64,10 @@ func newWordPressCollector(host string, dbname string, username string, pass str
 
 		numWebhooksMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace,
-			Name:      "webhooks",
+			Name:      "webhooks_metric",
 			Help:      "Shows the number of webhooks in the WordPress site",
 		},
-			[]string{"status_metric"},
+			[]string{"status"},
 		),
 
 		dbHost:        host,
