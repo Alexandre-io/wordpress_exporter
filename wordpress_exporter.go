@@ -3,9 +3,9 @@ package main
 import (
 	"net/http"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 
 	"flag"
 	"fmt"
@@ -22,12 +22,17 @@ const (
 
 //This is my collector metrics
 type wpCollector struct {
-	numPostsMetric     *prometheus.Desc
-	numCommentsMetric  *prometheus.Desc
-	numUsersMetric     *prometheus.Desc
-	numCustomersMetric *prometheus.Desc
-	numSessionsMetric  *prometheus.Desc
-	numWebhooksMetric  *prometheus.GaugeVec
+	numPostsMetric        *prometheus.GaugeVec
+	numCommentsMetric     *prometheus.GaugeVec
+	numUsersMetric        *prometheus.Desc
+	numCustomersMetric    *prometheus.Desc
+	numSessionsMetric     *prometheus.Desc
+	numWebhooksMetric     *prometheus.GaugeVec
+	numAutoloadMetric     *prometheus.Desc
+	numAutoloadSizeMetric *prometheus.Desc
+	numDatabaseSizeMetric *prometheus.Desc
+	numPostsTypeMetric    *prometheus.GaugeVec
+	numOrderTypeMetric    *prometheus.GaugeVec
 
 	dbHost        string
 	dbName        string
@@ -39,35 +44,75 @@ type wpCollector struct {
 //This is a constructor for my wpCollector struct
 func newWordPressCollector(host string, dbname string, username string, pass string, tablePrefix string) *wpCollector {
 	return &wpCollector{
-		numPostsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_posts_metric"),
-			"Shows the number of total posts in the WordPress site",
-			nil, nil,
-		),
-		numCommentsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_comments_metric"),
-			"Shows the number of total comments in the WordPress site",
-			nil, nil,
-		),
-		numUsersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_users_metric"),
+
+		numUsersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "users_total"),
 			"Shows the number of registered users in the WordPress site",
 			nil, nil,
 		),
 
-		numCustomersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_customers_metric"),
+		numCustomersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "customers_total"),
 			"Shows the number of customers in the WordPress site",
 			nil, nil,
 		),
 
-		numSessionsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "num_sessions_metric"),
+		numCommentsMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "comments_total",
+			Help:      "Shows the number of total comments in the WordPress site",
+		},
+			[]string{"type"},
+		),
+
+		numSessionsMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "user_sessions_total"),
 			"Shows the number of sessions in the WordPress site",
 			nil, nil,
 		),
 
+		numPostsMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "posts_total",
+			Help:      "Shows the number of total posts in the WordPress site",
+		},
+			[]string{"type"},
+		),
+
 		numWebhooksMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace,
-			Name:      "webhooks_metric",
+			Name:      "webhooks_total",
 			Help:      "Shows the number of webhooks in the WordPress site",
 		},
 			[]string{"status"},
+		),
+
+		numAutoloadMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "option_autoload_total"),
+			"Shows the number of options with autoload",
+			nil, nil,
+		),
+
+		numAutoloadSizeMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "option_autoload_bytes"),
+			"Shows the size in bytes of options with autoload",
+			nil, nil,
+		),
+
+		numDatabaseSizeMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "database_size_bytes"),
+			"Shows the size in bytes of the wordpress's database",
+			nil, nil,
+		),
+
+		numPostsTypeMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "posts_type_total",
+			Help:      "Shows the number of total posts type in the WordPress site",
+		},
+			[]string{"type"},
+		),
+
+		numOrderTypeMetric: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "order_type_total",
+			Help:      "Shows the number of total orders type in WooCommerce",
+		},
+			[]string{"type"},
 		),
 
 		dbHost:        host,
@@ -82,11 +127,16 @@ func newWordPressCollector(host string, dbname string, username string, pass str
 func (collector *wpCollector) Describe(ch chan<- *prometheus.Desc) {
 
 	//We set the metrics
-	ch <- collector.numPostsMetric
-	ch <- collector.numCommentsMetric
 	ch <- collector.numUsersMetric
 	ch <- collector.numCustomersMetric
 	ch <- collector.numSessionsMetric
+	ch <- collector.numAutoloadMetric
+	ch <- collector.numAutoloadSizeMetric
+	ch <- collector.numDatabaseSizeMetric
+	collector.numOrderTypeMetric.Describe(ch)
+	collector.numPostsTypeMetric.Describe(ch)
+	collector.numCommentsMetric.Describe(ch)
+	collector.numPostsMetric.Describe(ch)
 	collector.numWebhooksMetric.Describe(ch)
 }
 
@@ -103,70 +153,78 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	defer db.Close()
 
-	//select count(*) as numUsers from wp_users;
-	var numUsers float64
-	q1 := fmt.Sprintf("select count(*) as numUsers from %susers;", collector.dbTablePrefix)
-	err = db.QueryRow(q1).Scan(&numUsers)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ch <- prometheus.MustNewConstMetric(collector.numUsersMetric, prometheus.CounterValue, numUsers)
+	//select count(*) as value from wp_users;
+	queryNumUsersMetric := fmt.Sprintf("select count(*) as value from %susers;", collector.dbTablePrefix)
+	wpQueryDesc(db, ch, collector.numUsersMetric, queryNumUsersMetric)
 
-	//select count(*) as numCustomers from wp_users inner join wp_usermeta on wp_users.ID = wp_usermeta.user_id where wp_usermeta.meta_key = 'wp_capabilities' and wp_usermeta.meta_value like '%customer%';
-	var numCustomers float64
-	q2 := fmt.Sprintf("select count(*) as numCustomers from %susers inner join %susermeta on %susers.ID = %susermeta.user_id where %susermeta.meta_key = 'wp_capabilities' and %susermeta.meta_value like '%%customer%%';", collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix)
-	err = db.QueryRow(q2).Scan(&numCustomers)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ch <- prometheus.MustNewConstMetric(collector.numCustomersMetric, prometheus.CounterValue, numCustomers)
+	//select count(*) as value from wp_users inner join wp_usermeta on wp_users.ID = wp_usermeta.user_id where wp_usermeta.meta_key = 'wp_capabilities' and wp_usermeta.meta_value like '%customer%';
+	queryNumCustomersMetric := fmt.Sprintf("select count(*) as value from %susers inner join %susermeta on %susers.ID = %susermeta.user_id where %susermeta.meta_key = 'wp_capabilities' and %susermeta.meta_value like '%%customer%%';", collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix)
+	wpQueryDesc(db, ch, collector.numCustomersMetric, queryNumCustomersMetric)
 
-	//select count(*) as numComments from wp_comments;
-	var numComments float64
-	q3 := fmt.Sprintf("select count(*) as numComments from %scomments;", collector.dbTablePrefix)
-	err = db.QueryRow(q3).Scan(&numComments)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ch <- prometheus.MustNewConstMetric(collector.numCommentsMetric, prometheus.CounterValue, numComments)
+	//select COALESCE(NULLIF(comment_type, ''), 'comment') as label, count(*) as value from wp_comments group by comment_type;
+	queryNumCommentsMetric := fmt.Sprintf("select COALESCE(NULLIF(comment_type, ''), 'comment') as label, count(*) as value from %scomments group by comment_type;", collector.dbTablePrefix)
+	wpQueryGaugeVec(db, ch, collector.numCommentsMetric, queryNumCommentsMetric)
 
-	//select count(*) as numPosts from wp_posts WHERE post_type='post' AND post_status!='auto-draft';
-	var numPosts float64
-	q4 := fmt.Sprintf("select count(*) as numPosts from %sposts WHERE post_type='post' AND post_status!='auto-draft';", collector.dbTablePrefix)
-	err = db.QueryRow(q4).Scan(&numPosts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ch <- prometheus.MustNewConstMetric(collector.numPostsMetric, prometheus.CounterValue, numPosts)
+	//select post_status as label, count(*) as value from wp_posts WHERE post_type='post' GROUP BY post_status;
+	queryNumPostsMetric := fmt.Sprintf("select post_status as label, count(*) as value from %sposts WHERE post_type='post' GROUP BY post_status;", collector.dbTablePrefix)
+	wpQueryGaugeVec(db, ch, collector.numPostsMetric, queryNumPostsMetric)
 
 	//select count(*) as numSessions from wp_woocommerce_sessions;
-	var numSessions float64
-	q5 := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
-	err = db.QueryRow(q5).Scan(&numSessions)
+	queryNumSessionsMetric := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
+	wpQueryDesc(db, ch, collector.numSessionsMetric, queryNumSessionsMetric)
+
+	//select post_status as label, count(*) as value from wp_posts WHERE post_type='scheduled-action' GROUP BY post_status;
+	queryNumWebhooksMetric := fmt.Sprintf("select post_status as label, count(*) as value from %sposts WHERE post_type='scheduled-action' GROUP BY post_status;", collector.dbTablePrefix)
+	wpQueryGaugeVec(db, ch, collector.numWebhooksMetric, queryNumWebhooksMetric)
+
+	//select count(*) from wp_options where autoload = 'yes';
+	queryNumAutoloadMetric := fmt.Sprintf("select count(*) from %soptions where autoload = 'yes';", collector.dbTablePrefix)
+	wpQueryDesc(db, ch, collector.numAutoloadMetric, queryNumAutoloadMetric)
+
+	//select ROUND(SUM(LENGTH(option_value))) as value from wp_options where autoload = 'yes';
+	queryNumAutoloadSizeMetric := fmt.Sprintf("select ROUND(SUM(LENGTH(option_value))) as value from %soptions where autoload = 'yes';", collector.dbTablePrefix)
+	wpQueryDesc(db, ch, collector.numAutoloadSizeMetric, queryNumAutoloadSizeMetric)
+
+	//select count(*) from wp_options where autoload = 'yes';
+	queryNumDatabaseSizeMetric := fmt.Sprintf("select ROUND(SUM(data_length+index_length),2) as value from information_schema.tables where table_schema='%s';", collector.dbName)
+	wpQueryDesc(db, ch, collector.numDatabaseSizeMetric, queryNumDatabaseSizeMetric)
+
+	//select post_type, count(*) from wp_posts group by post_type;
+	queryNumPostsTypeMetric := fmt.Sprintf("select post_type, count(*) from %sposts group by post_type;", collector.dbTablePrefix)
+	wpQueryGaugeVec(db, ch, collector.numPostsTypeMetric, queryNumPostsTypeMetric)
+
+	//select SUBSTRING(post_status, 4), count(*) from wp_posts where post_type = 'shop_order' group by post_status;
+	queryNumOrderTypeMetric := fmt.Sprintf("select SUBSTRING(post_status, 4), count(*) from %sposts where post_type = 'shop_order' group by post_status;", collector.dbTablePrefix)
+	wpQueryGaugeVec(db, ch, collector.numOrderTypeMetric, queryNumOrderTypeMetric)
+
+}
+
+func wpQueryDesc(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.Desc, mysqlRequest string) {
+	var value float64
+	var err = db.QueryRow(mysqlRequest).Scan(&value)
 	if err != nil {
 		log.Fatal(err)
 	}
-	ch <- prometheus.MustNewConstMetric(collector.numSessionsMetric, prometheus.CounterValue, numSessions)
+	ch <- prometheus.MustNewConstMetric(desc, prometheus.CounterValue, value)
+}
 
-	//select post_status as statusWhs, count(*) as numWhs from wp_posts WHERE post_type='scheduled-action' GROUP BY post_status;
-	q6 := fmt.Sprintf("select post_status as statusWhs, count(*) as numWhs from %sposts WHERE post_type='scheduled-action' GROUP BY post_status;", collector.dbTablePrefix)
-	rows, err := db.Query(q6)
+func wpQueryGaugeVec(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.GaugeVec, mysqlRequest string) {
+	rows, err := db.Query(mysqlRequest)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rows.Close()
-	collector.numWebhooksMetric.Reset()
+	desc.Reset()
 	for rows.Next() {
-		var statusWhs string
-		var numWhs float64
-		err = rows.Scan(&statusWhs, &numWhs)
+		var label string
+		var value float64
+		err = rows.Scan(&label, &value)
 		if err != nil {
 			log.Fatal(err)
 		}
-		collector.numWebhooksMetric.WithLabelValues(statusWhs).Set(numWhs)
+		desc.WithLabelValues(label).Set(value)
 	}
-	collector.numWebhooksMetric.Collect(ch)
-
+	desc.Collect(ch)
 }
 
 func main() {
@@ -203,6 +261,6 @@ func main() {
 	//This section will start the HTTP server and expose
 	//any metrics on the /metrics endpoint.
 	http.Handle("/metrics", promhttp.Handler())
-	log.Info("Beginning to serve on port :9117")
-	log.Fatal(http.ListenAndServe(":9117", nil))
+	log.Info("Beginning to serve on port :9850")
+	log.Fatal(http.ListenAndServe(":9850", nil))
 }

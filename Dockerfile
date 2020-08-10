@@ -1,17 +1,21 @@
-FROM golang:1.12.7-buster
+FROM golang:1.14.7-alpine3.12
+
+# Install bash
+RUN apk add --no-cache bash
 
 # Set the Current Working Directory inside the container
-WORKDIR $GOPATH/src/wordpress_exporter
+WORKDIR /go/src/app
 
-# Copy sources.
+# Copy sources
 COPY . .
 
-# Download all the dependencies.
+# Download all the dependencies
 RUN go get -d -v ./...
 
 # Install the package
 RUN go install -v ./...
 
+# Default env
 ENV WORDPRESS_DB_HOST="" \
     WORDPRESS_DB_PORT="3306" \
     WORDPRESS_DB_USER="" \
@@ -19,7 +23,7 @@ ENV WORDPRESS_DB_HOST="" \
     WORDPRESS_DB_NAME="" \
     WORDPRESS_TABLE_PREFIX="wp_"
 
-EXPOSE 9117
+EXPOSE 9850
 
 ADD /docker-entrypoint.sh /docker-entrypoint.sh
 
