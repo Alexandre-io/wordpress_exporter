@@ -155,11 +155,11 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 
 	//select count(*) as value from wp_users;
 	queryNumUsersMetric := fmt.Sprintf("select count(*) as value from %susers;", collector.dbTablePrefix)
-	wpQueryDesc(db, ch, collector.numUsersMetric, queryNumUsersMetric)
+	wpQueryGauge(db, ch, collector.numUsersMetric, queryNumUsersMetric)
 
 	//select count(*) as value from wp_users inner join wp_usermeta on wp_users.ID = wp_usermeta.user_id where wp_usermeta.meta_key = 'wp_capabilities' and wp_usermeta.meta_value like '%customer%';
 	queryNumCustomersMetric := fmt.Sprintf("select count(*) as value from %susers inner join %susermeta on %susers.ID = %susermeta.user_id where %susermeta.meta_key = 'wp_capabilities' and %susermeta.meta_value like '%%customer%%';", collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix, collector.dbTablePrefix)
-	wpQueryDesc(db, ch, collector.numCustomersMetric, queryNumCustomersMetric)
+	wpQueryGauge(db, ch, collector.numCustomersMetric, queryNumCustomersMetric)
 
 	//select COALESCE(NULLIF(comment_type, ''), 'comment') as label, count(*) as value from wp_comments group by comment_type;
 	queryNumCommentsMetric := fmt.Sprintf("select COALESCE(NULLIF(comment_type, ''), 'comment') as label, count(*) as value from %scomments group by comment_type;", collector.dbTablePrefix)
@@ -171,7 +171,7 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 
 	//select count(*) as numSessions from wp_woocommerce_sessions;
 	queryNumSessionsMetric := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
-	wpQueryDesc(db, ch, collector.numSessionsMetric, queryNumSessionsMetric)
+	wpQueryGauge(db, ch, collector.numSessionsMetric, queryNumSessionsMetric)
 
 	//select post_status as label, count(*) as value from wp_posts WHERE post_type='scheduled-action' GROUP BY post_status;
 	queryNumWebhooksMetric := fmt.Sprintf("select post_status as label, count(*) as value from %sposts WHERE post_type='scheduled-action' GROUP BY post_status;", collector.dbTablePrefix)
@@ -179,15 +179,15 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 
 	//select count(*) from wp_options where autoload = 'yes';
 	queryNumAutoloadMetric := fmt.Sprintf("select count(*) from %soptions where autoload = 'yes';", collector.dbTablePrefix)
-	wpQueryDesc(db, ch, collector.numAutoloadMetric, queryNumAutoloadMetric)
+	wpQueryGauge(db, ch, collector.numAutoloadMetric, queryNumAutoloadMetric)
 
 	//select ROUND(SUM(LENGTH(option_value))) as value from wp_options where autoload = 'yes';
 	queryNumAutoloadSizeMetric := fmt.Sprintf("select ROUND(SUM(LENGTH(option_value))) as value from %soptions where autoload = 'yes';", collector.dbTablePrefix)
-	wpQueryDesc(db, ch, collector.numAutoloadSizeMetric, queryNumAutoloadSizeMetric)
+	wpQueryGauge(db, ch, collector.numAutoloadSizeMetric, queryNumAutoloadSizeMetric)
 
 	//select count(*) from wp_options where autoload = 'yes';
 	queryNumDatabaseSizeMetric := fmt.Sprintf("select ROUND(SUM(data_length+index_length),2) as value from information_schema.tables where table_schema='%s';", collector.dbName)
-	wpQueryDesc(db, ch, collector.numDatabaseSizeMetric, queryNumDatabaseSizeMetric)
+	wpQueryGauge(db, ch, collector.numDatabaseSizeMetric, queryNumDatabaseSizeMetric)
 
 	//select post_type, count(*) from wp_posts group by post_type;
 	queryNumPostsTypeMetric := fmt.Sprintf("select post_type, count(*) from %sposts group by post_type;", collector.dbTablePrefix)
@@ -199,13 +199,22 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 
 }
 
-func wpQueryDesc(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.Desc, mysqlRequest string) {
+func wpQueryCounter(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.Desc, mysqlRequest string) {
 	var value float64
 	var err = db.QueryRow(mysqlRequest).Scan(&value)
 	if err != nil {
 		log.Fatal(err)
 	}
 	ch <- prometheus.MustNewConstMetric(desc, prometheus.CounterValue, value)
+}
+
+func wpQueryGauge(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.Desc, mysqlRequest string) {
+	var value float64
+	var err = db.QueryRow(mysqlRequest).Scan(&value)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, value)
 }
 
 func wpQueryGaugeVec(db *sql.DB, ch chan<- prometheus.Metric, desc *prometheus.GaugeVec, mysqlRequest string) {
