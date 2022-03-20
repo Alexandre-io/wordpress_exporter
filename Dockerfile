@@ -1,7 +1,8 @@
 FROM golang:1.14.15-alpine3.13
 
-# Install bash
-RUN apk add --no-cache bash
+# Upgrade and Install bash
+RUN apk update && apk upgrade \
+    && apk add --no-cache bash
 
 # Set the Current Working Directory inside the container
 WORKDIR /go/src/app
@@ -21,7 +22,8 @@ ENV WORDPRESS_DB_HOST="" \
     WORDPRESS_DB_USER="" \
     WORDPRESS_DB_PASSWORD="" \
     WORDPRESS_DB_NAME="" \
-    WORDPRESS_TABLE_PREFIX="wp_"
+    WORDPRESS_TABLE_PREFIX="wp_" \
+    WORDPRESS_SKIP_WOOCOMMERCE="false"
 
 EXPOSE 9850
 

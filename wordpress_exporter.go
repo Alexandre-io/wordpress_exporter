@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"database/sql"
 
@@ -34,15 +35,16 @@ type wpCollector struct {
 	numPostsTypeMetric    *prometheus.GaugeVec
 	numOrderTypeMetric    *prometheus.GaugeVec
 
-	dbHost        string
-	dbName        string
-	dbUser        string
-	dbPass        string
-	dbTablePrefix string
+	dbHost            string
+	dbName            string
+	dbUser            string
+	dbPass            string
+	dbTablePrefix     string
+	dbSkipWooCommerce bool
 }
 
 //This is a constructor for my wpCollector struct
-func newWordPressCollector(host string, dbname string, username string, pass string, tablePrefix string) *wpCollector {
+func newWordPressCollector(host string, dbname string, username string, pass string, tablePrefix string, skipWooCommerce bool) *wpCollector {
 	return &wpCollector{
 
 		numUsersMetric: prometheus.NewDesc(prometheus.BuildFQName(namespace, "", "users_total"),
@@ -115,11 +117,12 @@ func newWordPressCollector(host string, dbname string, username string, pass str
 			[]string{"type"},
 		),
 
-		dbHost:        host,
-		dbName:        dbname,
-		dbUser:        username,
-		dbPass:        pass,
-		dbTablePrefix: tablePrefix,
+		dbHost:            host,
+		dbName:            dbname,
+		dbUser:            username,
+		dbPass:            pass,
+		dbTablePrefix:     tablePrefix,
+		dbSkipWooCommerce: skipWooCommerce,
 	}
 }
 
@@ -169,9 +172,11 @@ func (collector *wpCollector) Collect(ch chan<- prometheus.Metric) {
 	queryNumPostsMetric := fmt.Sprintf("select post_status as label, count(*) as value from %sposts WHERE post_type='post' GROUP BY post_status;", collector.dbTablePrefix)
 	wpQueryGaugeVec(db, ch, collector.numPostsMetric, queryNumPostsMetric)
 
-	//select count(*) as numSessions from wp_woocommerce_sessions;
-	queryNumSessionsMetric := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
-	wpQueryGauge(db, ch, collector.numSessionsMetric, queryNumSessionsMetric)
+	if !collector.dbSkipWooCommerce {
+		//select count(*) as numSessions from wp_woocommerce_sessions;
+		queryNumSessionsMetric := fmt.Sprintf("select count(*) as numSessions from %swoocommerce_sessions;", collector.dbTablePrefix)
+		wpQueryGauge(db, ch, collector.numSessionsMetric, queryNumSessionsMetric)
+	}
 
 	//select post_status as label, count(*) as value from wp_posts WHERE post_type='scheduled-action' GROUP BY post_status;
 	queryNumWebhooksMetric := fmt.Sprintf("select post_status as label, count(*) as value from %sposts WHERE post_type='scheduled-action' GROUP BY post_status;", collector.dbTablePrefix)
@@ -244,6 +249,7 @@ func main() {
 	wpUserPtr := flag.String("user", "", "DB user for connection")
 	wpPassPtr := flag.String("pass", "", "DB password for connection")
 	wpTablePrefixPtr := flag.String("tableprefix", "wp_", "Table prefix for WordPress tables")
+	wpSkipWooCommerce := flag.String("skipwoocommerce", "false", "Skip WooCommerce metrics")
 
 	flag.Parse()
 
@@ -252,6 +258,7 @@ func main() {
 	dbUser := *wpUserPtr
 	dbPassword := *wpPassPtr
 	tablePrefix := *wpTablePrefixPtr
+	skipWooCommerce, _ := strconv.ParseBool(*wpSkipWooCommerce)
 
 	if dbName == "" {
 		fmt.Fprintf(os.Stderr, "flag -db=dbname required!\n")
@@ -264,7 +271,7 @@ func main() {
 	}
 
 	//We create the collector
-	collector := newWordPressCollector(dbHost, dbName, dbUser, dbPassword, tablePrefix)
+	collector := newWordPressCollector(dbHost, dbName, dbUser, dbPassword, tablePrefix, skipWooCommerce)
 	prometheus.MustRegister(collector)
 
 	//This section will start the HTTP server and expose
