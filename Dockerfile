@@ -7,7 +7,7 @@ RUN apk add --no-cache bash
 WORKDIR /go/src/app
 
 # Copy sources
-COPY . .
+COPY go.mod go.sum wordpress_exporter.go ./
 
 # Download all the dependencies
 RUN go get -d -v ./...
