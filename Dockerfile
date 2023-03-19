@@ -1,4 +1,4 @@
-FROM golang:1.14.15-alpine3.13
+FROM golang:1.19.1-alpine3.16
 
 # Upgrade and Install bash
 RUN apk update && apk upgrade \
@@ -8,7 +8,7 @@ RUN apk update && apk upgrade \
 WORKDIR /go/src/app
 
 # Copy sources
-COPY . .
+COPY go.mod go.sum wordpress_exporter.go ./
 
 # Download all the dependencies
 RUN go get -d -v ./...
