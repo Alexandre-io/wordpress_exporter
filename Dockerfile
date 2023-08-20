@@ -1,4 +1,4 @@
-FROM golang:1.19.6-alpine3.16
+FROM golang:1.19.8-alpine3.16
 
 # Upgrade and Install bash
 RUN apk update && apk upgrade \
